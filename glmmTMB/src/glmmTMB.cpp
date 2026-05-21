@@ -34,6 +34,7 @@ enum valid_family {
   gaussian_family = 0,
   binomial_family = 100,
   betabinomial_family =101,
+  compbinomial_family   = 102,
   beta_family =200,
   ordbeta_family = 201,
   Gamma_family =300,
@@ -1038,6 +1039,13 @@ Type objective_function<Type>::operator() ()
         SIMULATE {
           yobs(i) = rbinom(size(i), rbeta(exp(s1), exp(s2)) );
         }
+        break;
+      case compbinomial_family:
+        // PLACEHOLDER: this is binomial -- nu (dispersion) is ignored.
+        // Replace with real Conway-Maxwell-Binomial log-density in Milestone 2.
+        s1 = logit_inverse_linkfun(eta(i), link); // logit(p)
+        tmp_loglik = dbinom_robust(yobs(i), size(i), s1, true);
+        SIMULATE{yobs(i) = rbinom(size(i), mu(i));}
         break;
       case nbinom1_family:
       case truncated_nbinom1_family:

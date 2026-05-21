@@ -141,6 +141,7 @@ get_nbinom_disp <- function(disp, pname1 = ".Theta", pname2 = "theta") {
 ##'      \item{beta}{Beta distribution: parameterization of Ferrari and Cribari-Neto (2004)
 ##' and the \pkg{betareg} package (Cribari-Neto and Zeileis 2010); \eqn{V=\mu(1-\mu)/(\phi+1)}{V=mu*(1-mu)/(phi+1)}}
 ##'     \item{betabinomial}{Beta-binomial distribution: parameterized according to Morris (1997). \eqn{V=\mu(1-\mu)(n(\phi+n)/(\phi+1))}{V=mu*(1-mu)*(n*(phi+n)/(phi+1))}}
+##'      \item{compbinomial}{Conway-Maxwell-Binomial distribution: mean-parameterized as in Huang (2017) but for the binomial. The dispersion parameter \eqn{\nu}{nu} controls under- (\eqn{\nu>1}) and over- (\eqn{\nu<1}) dispersion relative to the binomial; \eqn{\nu=1} recovers the binomial. \eqn{V} has no closed form and is computed numerically.}
 ##'      \item{tweedie}{Tweedie distribution: \eqn{V=\phi\mu^{power}}{V=phi*mu^power}. The power parameter is restricted to the interval \eqn{1<power<2}, i.e. the compound Poisson-gamma distribution. Code taken from the \code{tweedie} package, written by Peter Dunn. The power parameter (designated \code{psi} in the list of parameters) uses the link function \code{qlogis(psi-1.0)}; thus one can fix the power parameter to a specified value using \code{start = list(psi = qlogis(fixed_power-1.0)), map = list(psi = factor(NA))}.}
 ##'      \item{t_family}{Student-t distribution with adjustable scale and location parameters (also called a \href{https://en.wikipedia.org/wiki/Pearson_distribution#The_Pearson_type_VII_distribution}{Pearson type VII distribution}). The shape (degrees of freedom parameter) is fitted with a log link; it may be often be useful to fix the shape parameter using \code{start = list(psi = log(fixed_df)), map = list(psi = factor(NA))}.}
 ##'      \item{ordbeta}{Ordered beta regression from Kubinec (2022); fits continuous (e.g. proportion) data in the \emph{closed} interval [0,1]. Unlike the implementation in the \code{ordbeta} package, this family will not automatically scale the data. If your response variable is defined on the closed interval [a,b], transform it to [0,1] via \code{y_scaled <- (y-a)/(b-a)}.}
@@ -358,6 +359,18 @@ betabinomial <- function(link="logit") {
               },
               initialize = our_binom_initialize(binomial()$initialize))
     ## FIXME: should add needs_int = TRUE ??
+    return(make_family(r,link))
+}
+
+#' @rdname nbinom2
+#' @export
+compbinomial <- function(link="logit") {
+    r <- list(family="compbinomial",
+              variance = function(mu, nu) {
+                message("compbinomial variance function returns *unscaled* variance")
+                mu*(1-mu)
+              },
+              initialize = our_binom_initialize(binomial()$initialize))
     return(make_family(r,link))
 }
 

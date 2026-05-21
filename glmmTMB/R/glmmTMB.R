@@ -1121,7 +1121,7 @@ okWeights <- function(x) {
 }
 
 ## Families for which binomial()$initialize is used
-.binomialFamilies <- c("binomial", "betabinomial")
+.binomialFamilies <- c("binomial", "betabinomial", "compbinomial")
 binomialType <- function(x) {
   !is.na(match(x, .binomialFamilies))
 }
