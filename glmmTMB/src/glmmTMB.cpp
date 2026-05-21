@@ -1043,19 +1043,17 @@ Type objective_function<Type>::operator() ()
       case compbinomial_family:
         // Conway-Maxwell-Binomial, mean-parameterized.
         // glmmTMB's mu(i) for binomial-type families is the probability
-        // p in (0,1); the CMB helper expects the expected count mu in (0,n),
-        // so we pass size(i) * mu(i).  etadisp(i) is log(nu) (dispformula
-        // uses log link).
+        // p in (0,1); the TMB density expects the expected count mean in (0,n),
+        // so we pass size(i) * mu(i). etadisp(i) is log(nu) (dispformula
+        // uses log link), so we exponentiate.
         {
           int ni = CppAD::Integer(size(i));
-          tmp_loglik = glmmtmb::dcompbinom_robust(
-              yobs(i),
-              ni,                              // n
-              mu(i) * Type(ni),                // expected count = n * p
-              etadisp(i),                      // log(nu)
-              true);
+          s1 = mu(i) * Type(ni);     // mean = n * p
+          s2 = exp(etadisp(i));      // nu
+          tmp_loglik = dcompbinom2(yobs(i), ni, s1, s2, true);
           SIMULATE {
-            yobs(i) = glmmtmb::rcompbinom(ni, mu(i), exp(etadisp(i)));
+            // TODO: implement CMB simulator. For now, SIMULATE produces NA.
+            yobs(i) = NA_REAL;
           }
         }
         break;

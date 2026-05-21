@@ -275,6 +275,21 @@ namespace glmmtmb{
     return ans.getDeriv()[0];
   }
 
+  /* Calculate variance in compbinom family using
+
+     V(X) = (logZ)''(Psi)
+
+  */
+  double compbinom_calc_var(double mean, double nu, int n){
+    using atomic::compbinom_utils::calc_logitp;
+    using atomic::compbinom_utils::calc_logZ;
+    double logitp = calc_logitp(log(mean), nu, n);
+    typedef atomic::tiny_ad::variable<2, 1, double> ADdouble;
+    ADdouble logitp_ (logitp, 0);
+    ADdouble ans = calc_logZ<ADdouble>(logitp_, nu, n);
+    return ans.getDeriv()[0];
+  }
+
   /* Simulate from zero-truncated Conway-Maxwell-Poisson distribution */
   template<class Type>
   Type rtruncated_compois2(Type mean, Type nu) {
@@ -424,129 +439,6 @@ Type LambertW(Type x){
 // Vectorized version
 VECTORIZE1_t(LambertW)
 
-// ===========================================================================
-// Conway-Maxwell-Binomial (CMB) helpers, mean-parameterized.
-//
-// PMF:
-//   P(Y=k | n, p, nu) = choose(n,k)^nu * p^k * (1-p)^(n-k) / Z(n, p, nu)
-//   Z(n, p, nu)       = sum_{j=0}^n choose(n,j)^nu * p^j * (1-p)^(n-j)
-//
-// Internal scale: (logit_p, log_nu). Mean-parameterization is achieved
-// by an inner Newton solve that inverts mu(logit_p; n, nu).
-// ===========================================================================
-
-// Unnormalized log-PMF, built by recursion in log-space.
-// Uses the kernel ratio
-//   log P(Y=k+1) - log P(Y=k) = nu*(log(n-k) - log(k+1)) + logit_p
-// which is AD-friendly and avoids ever evaluating choose(n,k)^nu directly.
-template<class Type>
-vector<Type> cmb_log_pmf_kernel(int n, Type logit_p, Type log_nu) {
-  vector<Type> lp(n + 1);
-  lp(0) = Type(0);
-  Type nu = exp(log_nu);
-  for (int k = 0; k < n; ++k) {
-    lp(k + 1) = lp(k)
-              + nu * (log(Type(n - k)) - log(Type(k + 1)))
-              + logit_p;
-  }
-  return lp;
-}
-
-// Log-sum-exp normalizer via fold over logspace_add. AD-correct: no
-// branching on Type values, derivatives are exact.
-template<class Type>
-Type cmb_logZ(const vector<Type>& lp) {
-  Type acc = lp(0);
-  for (int k = 1; k < lp.size(); ++k) {
-    acc = logspace_add(acc, lp(k));
-  }
-  return acc;
-}
-
-// E[Y | n, logit_p, log_nu]
-template<class Type>
-Type cmb_mean(int n, Type logit_p, Type log_nu) {
-  vector<Type> lp = cmb_log_pmf_kernel(n, logit_p, log_nu);
-  Type logZ = cmb_logZ(lp);
-  Type m = Type(0);
-  for (int k = 0; k <= n; ++k) {
-    m += Type(k) * exp(lp(k) - logZ);
-  }
-  return m;
-}
-
-// Var[Y | n, logit_p, log_nu]
-// Used as derivative dmu/d(logit_p) in the inner Newton solve
-// (exponential-family identity).
-template<class Type>
-Type cmb_var(int n, Type logit_p, Type log_nu) {
-  vector<Type> lp = cmb_log_pmf_kernel(n, logit_p, log_nu);
-  Type logZ = cmb_logZ(lp);
-  Type m1 = Type(0), m2 = Type(0);
-  for (int k = 0; k <= n; ++k) {
-    Type pk = exp(lp(k) - logZ);
-    m1 += Type(k) * pk;
-    m2 += Type(k) * Type(k) * pk;
-  }
-  return m2 - m1 * m1;
-}
-
-// Inner Newton solve: find logit_p such that E[Y | n, logit_p, log_nu] = mu.
-// Fixed 20 iterations — no early exit on Type values, which would break the
-// AD chain and produce incorrect gradients in TMB. Newton converges
-// quadratically here (exponential-family identity dmu/dlogit_p = Var),
-// so 20 iterations reaches machine precision comfortably.
-template<class Type>
-Type cmb_solve_logit_p(Type mu, Type log_nu, int n) {
-  Type mu_safe = mu;
-  Type eps = Type(1e-10);
-  if (asDouble(mu_safe) < asDouble(eps))            mu_safe = eps;
-  if (asDouble(mu_safe) > asDouble(Type(n) - eps))  mu_safe = Type(n) - eps;
-  Type logit_p = log(mu_safe / (Type(n) - mu_safe));
-  for (int it = 0; it < 20; ++it) {
-    Type m_cur = cmb_mean(n, logit_p, log_nu);
-    Type v_cur = cmb_var(n, logit_p, log_nu);
-    // Guard against pathological zero-variance (never triggers in practice).
-    Type v_safe = v_cur + Type(1e-300);
-    Type step = (m_cur - mu) / v_safe;
-    logit_p -= step;
-  }
-  return logit_p;
-}
-
-// Log-density of Conway-Maxwell-Binomial, mean-parametrized.
-//   y         observed integer count (0 <= y <= n)
-//   n         number of trials
-//   mu        CMB mean in (0, n)
-//   log_nu    log of dispersion parameter
-//   give_log  if true return log f, else f
-template<class Type>
-Type dcompbinom_robust(Type y, int n, Type mu, Type log_nu, int give_log = 0) {
-  Type logit_p = cmb_solve_logit_p(mu, log_nu, n);
-  vector<Type> lp = cmb_log_pmf_kernel(n, logit_p, log_nu);
-  Type logZ = cmb_logZ(lp);
-  int yi = CppAD::Integer(y);
-  Type ll = lp(yi) - logZ;
-  if (!give_log) return exp(ll);
-  return ll;
-}
-
-// Sampler for SIMULATE blocks. Direct inverse-CDF on {0, ..., n}.
-template<class Type>
-Type rcompbinom(int n, Type p, Type nu) {
-  Type logit_p = log(p / (Type(1) - p));
-  Type log_nu  = log(nu);
-  vector<Type> lp = cmb_log_pmf_kernel(n, logit_p, log_nu);
-  Type logZ = cmb_logZ(lp);
-  Type u = runif(Type(0), Type(1));
-  Type cum = Type(0);
-  int k = 0;
-  for (k = 0; k < n; ++k) {
-    cum += exp(lp(k) - logZ);
-    if (asDouble(cum) >= asDouble(u)) break;
-  }
-  return Type(k);
-}
 
 } // namespace glmmtmb
 
@@ -558,6 +450,17 @@ extern "C" {
     SEXP ans = PROTECT(Rf_allocVector(REALSXP, LENGTH(mean)));
     for(int i=0; i<LENGTH(mean); i++)
       REAL(ans)[i] = glmmtmb::compois_calc_var(REAL(mean)[i], REAL(nu)[i]);
+    UNPROTECT(1);
+    return ans;
+  }
+
+  SEXP compbinom_calc_var(SEXP mean, SEXP nu, SEXP size) {
+    if (LENGTH(mean) != LENGTH(nu) || LENGTH(mean) != LENGTH(size))
+      error("'mean', 'nu', and 'size' must be vectors of same length.");
+    SEXP ans = PROTECT(Rf_allocVector(REALSXP, LENGTH(mean)));
+    for(int i=0; i<LENGTH(mean); i++)
+      REAL(ans)[i] = glmmtmb::compbinom_calc_var(
+        REAL(mean)[i], REAL(nu)[i], INTEGER(size)[i]);
     UNPROTECT(1);
     return ans;
   }

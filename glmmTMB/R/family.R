@@ -366,12 +366,20 @@ betabinomial <- function(link="logit") {
 #' @export
 compbinomial <- function(link="logit") {
     r <- list(family="compbinomial",
-              variance = function(mu, nu) {
-                message("compbinomial variance function returns *unscaled* variance")
-                mu*(1-mu)
+              variance = function(mu, phi, size) {
+                  ## mu: probability (in (0,1))
+                  ## phi: dispersion parameter; nu = 1/phi
+                  ## size: number of trials per observation
+                  if (length(phi) == 1) phi <- rep(phi, length = length(mu))
+                  if (length(size) == 1) size <- rep(size, length = length(mu))
+                  .Call("compbinom_calc_var",
+                        mu * size,            # mean = n * p
+                        1/phi,                # nu
+                        as.integer(size),     # n
+                        PACKAGE = "glmmTMB")
               },
               initialize = our_binom_initialize(binomial()$initialize))
-    return(make_family(r,link))
+    return(make_family(r, link))
 }
 
 #' @rdname nbinom2
