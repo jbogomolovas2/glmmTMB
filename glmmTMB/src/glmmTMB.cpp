@@ -1041,11 +1041,23 @@ Type objective_function<Type>::operator() ()
         }
         break;
       case compbinomial_family:
-        // PLACEHOLDER: this is binomial -- nu (dispersion) is ignored.
-        // Replace with real Conway-Maxwell-Binomial log-density in Milestone 2.
-        s1 = logit_inverse_linkfun(eta(i), link); // logit(p)
-        tmp_loglik = dbinom_robust(yobs(i), size(i), s1, true);
-        SIMULATE{yobs(i) = rbinom(size(i), mu(i));}
+        // Conway-Maxwell-Binomial, mean-parameterized.
+        // glmmTMB's mu(i) for binomial-type families is the probability
+        // p in (0,1); the CMB helper expects the expected count mu in (0,n),
+        // so we pass size(i) * mu(i).  etadisp(i) is log(nu) (dispformula
+        // uses log link).
+        {
+          int ni = CppAD::Integer(size(i));
+          tmp_loglik = glmmtmb::dcompbinom_robust(
+              yobs(i),
+              ni,                              // n
+              mu(i) * Type(ni),                // expected count = n * p
+              etadisp(i),                      // log(nu)
+              true);
+          SIMULATE {
+            yobs(i) = glmmtmb::rcompbinom(ni, mu(i), exp(etadisp(i)));
+          }
+        }
         break;
       case nbinom1_family:
       case truncated_nbinom1_family:
