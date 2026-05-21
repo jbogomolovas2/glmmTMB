@@ -452,18 +452,15 @@ vector<Type> cmb_log_pmf_kernel(int n, Type logit_p, Type log_nu) {
   return lp;
 }
 
-// Log-sum-exp normalizer, pivoted on max for stability.
+// Log-sum-exp normalizer via fold over logspace_add. AD-correct: no
+// branching on Type values, derivatives are exact.
 template<class Type>
 Type cmb_logZ(const vector<Type>& lp) {
-  Type m = lp(0);
+  Type acc = lp(0);
   for (int k = 1; k < lp.size(); ++k) {
-    if (asDouble(lp(k)) > asDouble(m)) m = lp(k);
+    acc = logspace_add(acc, lp(k));
   }
-  Type s = Type(0);
-  for (int k = 0; k < lp.size(); ++k) {
-    s += exp(lp(k) - m);
-  }
-  return m + log(s);
+  return acc;
 }
 
 // E[Y | n, logit_p, log_nu]
@@ -495,7 +492,10 @@ Type cmb_var(int n, Type logit_p, Type log_nu) {
 }
 
 // Inner Newton solve: find logit_p such that E[Y | n, logit_p, log_nu] = mu.
-// Up to 20 iterations, early exit when |step| < 1e-10.
+// Fixed 20 iterations — no early exit on Type values, which would break the
+// AD chain and produce incorrect gradients in TMB. Newton converges
+// quadratically here (exponential-family identity dmu/dlogit_p = Var),
+// so 20 iterations reaches machine precision comfortably.
 template<class Type>
 Type cmb_solve_logit_p(Type mu, Type log_nu, int n) {
   Type mu_safe = mu;
@@ -506,10 +506,10 @@ Type cmb_solve_logit_p(Type mu, Type log_nu, int n) {
   for (int it = 0; it < 20; ++it) {
     Type m_cur = cmb_mean(n, logit_p, log_nu);
     Type v_cur = cmb_var(n, logit_p, log_nu);
-    if (asDouble(v_cur) < 1e-300) break;
-    Type step = (m_cur - mu) / v_cur;
+    // Guard against pathological zero-variance (never triggers in practice).
+    Type v_safe = v_cur + Type(1e-300);
+    Type step = (m_cur - mu) / v_safe;
     logit_p -= step;
-    if (asDouble(step) > -1e-10 && asDouble(step) < 1e-10) break;
   }
   return logit_p;
 }
